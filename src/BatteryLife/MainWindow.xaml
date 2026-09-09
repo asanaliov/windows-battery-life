@@ -1,0 +1,176 @@
+<Window x:Class="BatteryLife.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
+        xmlns:conv="clr-namespace:BatteryLife.Converters"
+        mc:Ignorable="d"
+        Title="Battery Life" Height="700" Width="960" MinWidth="720" MinHeight="560"
+        Background="#F4F5F7"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <conv:InverseBooleanConverter x:Key="InverseBool"/>
+
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="6"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="#000000" Opacity="0.06" BlurRadius="8" ShadowDepth="1"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="CardLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#6B7280"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style x:Key="CardValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="26"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="10,18,10,4"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Grid.Row="0" Margin="16,16,16,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="{Binding DeviceName}" FontSize="20" FontWeight="Bold"/>
+                <TextBlock Text="{Binding LastScanText}" Foreground="#6B7280" FontSize="12" Margin="0,2,0,0"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="Refresh" Padding="14,8" Command="{Binding RefreshCommand}"
+                    IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBool}}"/>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="10,0,10,20">
+
+                <ProgressBar IsIndeterminate="True" Height="3" Margin="6,4"
+                             Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}"/>
+
+                <Border Background="#FEF2F2" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="6"
+                        Padding="12" Margin="6,4"
+                        Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" Foreground="#991B1B"/>
+                </Border>
+
+                <!-- Summary cards -->
+                <UniformGrid Columns="4" Rows="1">
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="BATTERY HEALTH" Style="{StaticResource CardLabel}"/>
+                            <TextBlock Text="{Binding HealthText}" Style="{StaticResource CardValue}" Foreground="{Binding HealthBrush}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="CHARGE CYCLES" Style="{StaticResource CardLabel}"/>
+                            <TextBlock Text="{Binding CycleCountText}" Style="{StaticResource CardValue}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="FULL CHARGE CAPACITY" Style="{StaticResource CardLabel}"/>
+                            <TextBlock Text="{Binding FullChargeCapacityText}" Style="{StaticResource CardValue}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="DESIGN CAPACITY" Style="{StaticResource CardLabel}"/>
+                            <TextBlock Text="{Binding DesignCapacityText}" Style="{StaticResource CardValue}"/>
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+
+                <!-- Battery life estimates -->
+                <TextBlock Text="Estimated battery life" Style="{StaticResource SectionHeader}"/>
+                <UniformGrid Columns="2" Rows="1">
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="AT CURRENT (FULL) CHARGE" Style="{StaticResource CardLabel}"/>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Active use" Foreground="#6B7280" FontSize="11"/>
+                                    <TextBlock Text="{Binding FullChargeActiveText}" FontSize="18" FontWeight="SemiBold"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="Standby" Foreground="#6B7280" FontSize="11"/>
+                                    <TextBlock Text="{Binding FullChargeStandbyText}" FontSize="18" FontWeight="SemiBold"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="AT ORIGINAL DESIGN CAPACITY" Style="{StaticResource CardLabel}"/>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Active use" Foreground="#6B7280" FontSize="11"/>
+                                    <TextBlock Text="{Binding DesignActiveText}" FontSize="18" FontWeight="SemiBold"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="Standby" Foreground="#6B7280" FontSize="11"/>
+                                    <TextBlock Text="{Binding DesignStandbyText}" FontSize="18" FontWeight="SemiBold"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+
+                <!-- History charts -->
+                <TextBlock Text="History" Style="{StaticResource SectionHeader}"
+                           Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}"/>
+                <Grid Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="CAPACITY OVER TIME" Style="{StaticResource CardLabel}"/>
+                            <lvc:CartesianChart Series="{Binding CapacitySeries}" XAxes="{Binding HistoryXAxes}" Height="220" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="CYCLE COUNT OVER TIME" Style="{StaticResource CardLabel}"/>
+                            <lvc:CartesianChart Series="{Binding CycleSeries}" XAxes="{Binding HistoryXAxes}" Height="220" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <TextBlock Text="Not enough history yet. Windows builds this up over about a week of use — check back later."
+                           Foreground="#6B7280" Margin="10,10" TextWrapping="Wrap"
+                           Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}, ConverterParameter=Invert}"/>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>
