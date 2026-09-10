@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish self-contained exe
+        run: dotnet publish src/BatteryLife/BatteryLife.csproj -c Release -r win-x64 -o publish
+
+      - name: Rename exe with version
+        shell: pwsh
+        run: Copy-Item publish/BatteryLife.exe "BatteryLife-${{ github.ref_name }}-win-x64.exe"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BatteryLife-${{ github.ref_name }}-win-x64.exe
+          generate_release_notes: true
