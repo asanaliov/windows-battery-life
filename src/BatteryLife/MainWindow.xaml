@@ -6,7 +6,8 @@
         xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
         xmlns:conv="clr-namespace:BatteryLife.Converters"
         mc:Ignorable="d"
-        Title="Battery Life" Height="820" Width="980" MinWidth="720" MinHeight="600"
+        Title="Battery Life" Height="820" Width="1080" MinWidth="720" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
         Background="#F4F5F7"
         FontFamily="Segoe UI">
     <Window.Resources>
@@ -38,17 +39,6 @@
             <Setter Property="FontSize" Value="15"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Margin" Value="10,18,10,4"/>
-        </Style>
-        <Style x:Key="ChartTitle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="#374151"/>
-        </Style>
-        <Style x:Key="TrendLabel" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Foreground" Value="#6B7280"/>
-            <Setter Property="Margin" Value="0,2,0,0"/>
-            <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
     </Window.Resources>
 
@@ -98,10 +88,11 @@
                             <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#1D4ED8"
                                        Text="{Binding UpdateVersionText}"/>
                             <TextBlock FontSize="11" Foreground="#3B82F6" Margin="0,2,0,0"
-                                       Text="A new release is available on GitHub."/>
+                                       Text="{Binding UpdateStatusText}"/>
                         </StackPanel>
-                        <Button Grid.Column="1" Content="Download Update" Padding="12,6"
-                                Command="{Binding OpenUpdateUrlCommand}"
+                        <Button Grid.Column="1" Content="Install &amp; Restart" Padding="12,6"
+                                Command="{Binding InstallUpdateCommand}"
+                                IsEnabled="{Binding IsUpdating, Converter={StaticResource InverseBool}}"
                                 Background="#2563EB" Foreground="White" BorderThickness="0"
                                 FontWeight="SemiBold" Cursor="Hand"/>
                     </Grid>
@@ -194,76 +185,32 @@ Battery health is shown as 100% (the true maximum).</Run>
                 <TextBlock Text="Battery history" Style="{StaticResource SectionHeader}"
                            Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}"/>
 
-                <!-- Row 1: Capacity and Health -->
+                <!-- Health and cycle history -->
                 <Grid Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <!-- Capacity over time -->
+                    <!-- Battery health % over time -->
                     <Border Grid.Column="0" Style="{StaticResource CardStyle}">
                         <StackPanel>
-                            <TextBlock Text="CAPACITY OVER TIME" Style="{StaticResource CardLabel}"/>
-                            <TextBlock Style="{StaticResource ChartTitle}" Margin="0,4,0,0"
-                                       Text="Full charge vs. design capacity (Wh)"/>
-                            <TextBlock Style="{StaticResource TrendLabel}" Text="{Binding CapacityTrendText}"/>
-                            <lvc:CartesianChart Series="{Binding CapacitySeries}"
-                                               XAxes="{Binding CapacityXAxes}"
-                                               YAxes="{Binding CapacityYAxes}"
-                                               Height="220" Margin="0,8,0,0"
-                                               LegendPosition="Top"/>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Battery health % over time -->
-                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
-                        <StackPanel>
                             <TextBlock Text="BATTERY HEALTH OVER TIME" Style="{StaticResource CardLabel}"/>
-                            <TextBlock Style="{StaticResource ChartTitle}" Margin="0,4,0,0"
-                                       Text="Health percentage (full charge ÷ design capacity)"/>
-                            <TextBlock Style="{StaticResource TrendLabel}"
-                                       Text="How much usable capacity remains relative to when the battery was new."/>
                             <lvc:CartesianChart Series="{Binding HealthSeries}"
                                                XAxes="{Binding HealthXAxes}"
                                                YAxes="{Binding HealthYAxes}"
-                                               Height="220" Margin="0,8,0,0"
-                                               LegendPosition="Top"/>
+                                               Height="240" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
-                </Grid>
-
-                <!-- Row 2: Cycle count -->
-                <Grid Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
 
                     <!-- Cycle count over time -->
-                    <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
                         <StackPanel>
                             <TextBlock Text="CHARGE CYCLES OVER TIME" Style="{StaticResource CardLabel}"/>
-                            <TextBlock Style="{StaticResource ChartTitle}" Margin="0,4,0,0"
-                                       Text="Cumulative full charge cycles"/>
-                            <TextBlock Style="{StaticResource TrendLabel}" Text="{Binding CycleTrendText}"/>
                             <lvc:CartesianChart Series="{Binding CycleSeries}"
                                                XAxes="{Binding CycleXAxes}"
                                                YAxes="{Binding CycleYAxes}"
-                                               Height="220" Margin="0,8,0,0"
-                                               LegendPosition="Top"/>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Placeholder for future chart -->
-                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
-                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock Text="TIP" Style="{StaticResource CardLabel}" HorizontalAlignment="Center"/>
-                            <TextBlock FontSize="13" Foreground="#374151" TextWrapping="Wrap" TextAlignment="Center"
-                                       Margin="0,8,0,0" MaxWidth="300">
-                                Most lithium-ion batteries are rated for 300-500 full charge cycles.
-                                Keeping your battery between 20% and 80% will slow capacity decline.
-                            </TextBlock>
+                                               Height="240" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>

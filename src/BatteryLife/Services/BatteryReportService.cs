@@ -82,7 +82,7 @@ public class BatteryReportService
             batteryEl.Element(Ns + "Chemistry")?.Value ?? "Unknown",
             ParseMilliwattHoursToWh(batteryEl.Element(Ns + "DesignCapacity")?.Value),
             ParseMilliwattHoursToWh(batteryEl.Element(Ns + "FullChargeCapacity")?.Value),
-            ParseInt(batteryEl.Element(Ns + "CycleCount")?.Value));
+            ParseCycleCount(batteryEl.Element(Ns + "CycleCount")?.Value));
 
         var runtimeEl = root.Element(Ns + "RuntimeEstimates");
         var designEstimate = ParseRuntimeEstimate(runtimeEl?.Element(Ns + "DesignCapacity"));
@@ -116,7 +116,7 @@ public class BatteryReportService
             ParseDateTime(el.Attribute("LocalEndDate")?.Value ?? el.Attribute("EndDate")?.Value) ?? DateTime.MinValue,
             ParseMilliwattHoursToWh(el.Attribute("DesignCapacity")?.Value),
             ParseMilliwattHoursToWh(el.Attribute("FullChargeCapacity")?.Value),
-            ParseInt(el.Attribute("CycleCount")?.Value));
+            ParseCycleCount(el.Attribute("CycleCount")?.Value));
     }
 
     private static DateTime? ParseDateTime(string? raw) =>
@@ -126,6 +126,9 @@ public class BatteryReportService
         double.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out var mwh) ? mwh / 1000.0 : 0;
 
     private static int ParseInt(string? raw) => int.TryParse(raw, out var value) ? value : 0;
+
+    private static int ParseCycleCount(string? raw) =>
+        int.TryParse(raw, out var value) && value >= 0 ? value : -1;
 
     private static TimeSpan? ParseDuration(string? raw)
     {

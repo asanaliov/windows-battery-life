@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using System.IO;
+using System.Windows;
 using System.Windows.Media;
 using BatteryLife.Models;
 using BatteryLife.Services;
@@ -45,20 +46,18 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private bool hasHistory;
 
-    // Trend labels shown above the charts.
-    [ObservableProperty] private string capacityTrendText = "";
-    [ObservableProperty] private string cycleTrendText = "";
+    private IReadOnlyList<CapacityHistoryEntry> _history = [];
+    private DateTime _historyAsOf;
 
     // Update banner
     [ObservableProperty] private bool updateAvailable;
     [ObservableProperty] private string updateVersionText = "";
-    [ObservableProperty] private string updateUrl = "";
+    [ObservableProperty] private string updateStatusText = "A new release is available.";
+    [ObservableProperty] private bool isUpdating;
+    private Uri? _updateDownloadUrl;
 
-    public ISeries[] CapacitySeries { get; private set; } = [];
     public ISeries[] HealthSeries { get; private set; } = [];
     public ISeries[] CycleSeries { get; private set; } = [];
-    public Axis[] CapacityXAxes { get; private set; } = [];
-    public Axis[] CapacityYAxes { get; private set; } = [];
     public Axis[] HealthXAxes { get; private set; } = [];
     public Axis[] HealthYAxes { get; private set; } = [];
     public Axis[] CycleXAxes { get; private set; } = [];
@@ -94,11 +93,50 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void OpenUpdateUrl()
+    private async Task InstallUpdateAsync()
     {
-        if (!string.IsNullOrEmpty(UpdateUrl))
+        if (_updateDownloadUrl is null || IsUpdating)
         {
-            Process.Start(new ProcessStartInfo(UpdateUrl) { UseShellExecute = true });
+            return;
+        }
+
+        if (MessageBox.Show(
+                $"Download and install {UpdateVersionText} now? The app will restart when the update is ready.",
+                "Install update",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        IsUpdating = true;
+        HasError = false;
+        ErrorMessage = null;
+        string? downloadedUpdate = null;
+        try
+        {
+            UpdateStatusText = "Downloading update...";
+            var progress = new Progress<double>(value =>
+                UpdateStatusText = $"Downloading update... {value:P0}");
+            downloadedUpdate = await _updateService.DownloadUpdateAsync(_updateDownloadUrl, progress);
+
+            UpdateStatusText = "Installing update and restarting...";
+            _updateService.LaunchUpdater(downloadedUpdate);
+            Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            HasError = true;
+            ErrorMessage = $"Update failed: {ex.Message}";
+            UpdateStatusText = "";
+            if (downloadedUpdate is not null && File.Exists(downloadedUpdate))
+            {
+                File.Delete(downloadedUpdate);
+            }
+        }
+        finally
+        {
+            IsUpdating = false;
         }
     }
 
@@ -110,7 +148,7 @@ public partial class MainViewModel : ObservableObject
             if (result is not null)
             {
                 UpdateVersionText = $"Update available: {result.Version}";
-                UpdateUrl = result.Url;
+                _updateDownloadUrl = result.DownloadUrl;
                 UpdateAvailable = true;
             }
         }
@@ -144,7 +182,7 @@ public partial class MainViewModel : ObservableObject
             _ => PoorBrush,
         };
 
-        CycleCountText = report.Battery.CycleCount.ToString();
+        CycleCountText = report.Battery.CycleCount >= 0 ? report.Battery.CycleCount.ToString() : "—";
         DesignCapacityText = $"{report.Battery.DesignCapacityWh:0.0} Wh";
         FullChargeCapacityText = $"{report.Battery.FullChargeCapacityWh:0.0} Wh";
 
@@ -153,37 +191,32 @@ public partial class MainViewModel : ObservableObject
         DesignActiveText = FormatDuration(report.DesignEstimate.ActiveRuntime);
         DesignStandbyText = FormatDuration(report.DesignEstimate.ConnectedStandbyRuntime);
 
-        HasHistory = report.History.Count > 1;
+        _history = report.History
+            .Where(entry =>
+                entry.StartDate != DateTime.MinValue &&
+                entry.EndDate != DateTime.MinValue &&
+                entry.EndDate >= entry.StartDate &&
+                entry.StartDate <= report.ScanTime &&
+                entry.EndDate <= report.ScanTime)
+            .ToArray();
+        _historyAsOf = _history.Count > 0
+            ? _history.Max(entry => entry.EndDate)
+            : report.ScanTime;
+        HasHistory = _history.Count > 1;
+        UpdateHistoryCharts();
+    }
+
+    private void UpdateHistoryCharts()
+    {
+        var history = _history.Where(entry => entry.EndDate <= _historyAsOf).ToArray();
+        var cycleHistory = history.Where(entry => entry.CycleCount >= 0).ToArray();
+        HasHistory = history.Length > 1;
+
         if (HasHistory)
         {
-            var labels = report.History.Select(h => h.StartDate.ToString("MMM d")).ToArray();
+            var labels = history.Select(h => h.EndDate.ToString("MMM d, yyyy")).ToArray();
 
-            // --- Capacity chart: full charge vs. design capacity ---
-            CapacitySeries =
-            [
-                new LineSeries<double>
-                {
-                    Name = "Full charge capacity (Wh)",
-                    Values = report.History.Select(h => h.FullChargeCapacityWh).ToArray(),
-                    GeometrySize = 5,
-                    Fill = null,
-                    Stroke = new SolidColorPaint(SKColors.DodgerBlue, 2),
-                    GeometryStroke = new SolidColorPaint(SKColors.DodgerBlue, 2),
-                },
-                new LineSeries<double>
-                {
-                    Name = "Design capacity (Wh)",
-                    Values = report.History.Select(h => h.DesignCapacityWh).ToArray(),
-                    GeometrySize = 0,
-                    Fill = null,
-                    Stroke = new SolidColorPaint(new SKColor(0xD1, 0xD5, 0xDB), 2) { PathEffect = new DashEffect([6, 4]) },
-                },
-            ];
-            CapacityXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
-            CapacityYAxes = [new Axis { Name = "Wh", TextSize = 11, NameTextSize = 11 }];
-
-            // --- Health chart: battery health % over time ---
-            var healthValues = report.History
+            var healthValues = history
                 .Select(h => h.DesignCapacityWh > 0
                     ? Math.Min(Math.Round(h.FullChargeCapacityWh / h.DesignCapacityWh * 100, 1), 100.0)
                     : 0.0)
@@ -202,100 +235,47 @@ public partial class MainViewModel : ObservableObject
                 },
             ];
             HealthXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
-            HealthYAxes =
-            [
-                new Axis
-                {
-                    Name = "%",
-                    TextSize = 11,
-                    NameTextSize = 11,
-                    MinLimit = 0,
-                    MaxLimit = 100,
-                },
-            ];
-
-            // --- Trend labels ---
-            CapacityTrendText = BuildCapacityTrend(report.History);
-            CycleTrendText = BuildCycleTrend(report.History);
-
-            // --- Cycle count chart ---
+            HealthYAxes = [new Axis { Name = "%", TextSize = 11, NameTextSize = 11, MinLimit = 0, MaxLimit = 100 }];
             CycleSeries =
             [
                 new LineSeries<int>
                 {
                     Name = "Charge cycles",
-                    Values = report.History.Select(h => h.CycleCount).ToArray(),
+                    Values = cycleHistory.Select(h => h.CycleCount).ToArray(),
                     GeometrySize = 5,
                     Fill = null,
                     Stroke = new SolidColorPaint(SKColors.DarkOrange, 2),
                     GeometryStroke = new SolidColorPaint(SKColors.DarkOrange, 2),
                 },
             ];
-            CycleXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
+            CycleXAxes =
+            [
+                new Axis
+                {
+                    Labels = cycleHistory.Select(h => h.EndDate.ToString("MMM d, yyyy")).ToArray(),
+                    LabelsRotation = 45,
+                    TextSize = 11,
+                },
+            ];
             CycleYAxes = [new Axis { Name = "Cycles", TextSize = 11, NameTextSize = 11, MinLimit = 0 }];
+
         }
         else
         {
-            CapacitySeries = [];
             HealthSeries = [];
             CycleSeries = [];
-            CapacityXAxes = [];
-            CapacityYAxes = [];
             HealthXAxes = [];
             HealthYAxes = [];
             CycleXAxes = [];
             CycleYAxes = [];
-            CapacityTrendText = "";
-            CycleTrendText = "";
         }
 
-        OnPropertyChanged(nameof(CapacitySeries));
         OnPropertyChanged(nameof(HealthSeries));
         OnPropertyChanged(nameof(CycleSeries));
-        OnPropertyChanged(nameof(CapacityXAxes));
-        OnPropertyChanged(nameof(CapacityYAxes));
         OnPropertyChanged(nameof(HealthXAxes));
         OnPropertyChanged(nameof(HealthYAxes));
         OnPropertyChanged(nameof(CycleXAxes));
         OnPropertyChanged(nameof(CycleYAxes));
-    }
-
-    // Returns a short human-readable description of the capacity trend.
-    private static string BuildCapacityTrend(IReadOnlyList<CapacityHistoryEntry> history)
-    {
-        if (history.Count < 2) return "";
-
-        var first = history[0].FullChargeCapacityWh;
-        var last = history[^1].FullChargeCapacityWh;
-        if (first <= 0) return "";
-
-        var changePct = (last - first) / first * 100;
-        return changePct switch
-        {
-            < -10 => $"Declining fast ({changePct:+0.#;-0.#}% over period) - consider battery service",
-            < -3  => $"Gradual decline ({changePct:+0.#;-0.#}% over period) - normal aging",
-            _     => $"Stable ({changePct:+0.#;-0.#}% over period)",
-        };
-    }
-
-    // Returns a short human-readable description of the cycle count trend.
-    private static string BuildCycleTrend(IReadOnlyList<CapacityHistoryEntry> history)
-    {
-        if (history.Count < 2) return "";
-
-        var first = history[0].CycleCount;
-        var last = history[^1].CycleCount;
-        var delta = last - first;
-        if (delta <= 0) return "";
-
-        // Estimate how many days span the history.
-        var days = (history[^1].EndDate - history[0].StartDate).TotalDays;
-        if (days > 0)
-        {
-            var perDay = delta / days;
-            return $"+{delta} cycles over period (~{perDay:0.#}/day)";
-        }
-        return $"+{delta} cycles over period";
     }
 
     private static string FormatDuration(TimeSpan? ts)
