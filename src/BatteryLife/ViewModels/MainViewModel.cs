@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows.Media;
 using BatteryLife.Models;
 using BatteryLife.Services;
@@ -5,6 +6,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LiveChartsCore;
 using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
 
 namespace BatteryLife.ViewModels;
 
@@ -15,6 +18,7 @@ public partial class MainViewModel : ObservableObject
     private static readonly SolidColorBrush PoorBrush = new(Color.FromRgb(0xEF, 0x44, 0x44));
 
     private readonly BatteryReportService _service = new();
+    private readonly UpdateService _updateService = new();
 
     [ObservableProperty] private bool isLoading;
     [ObservableProperty] private bool hasError;
@@ -27,6 +31,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string healthText = "";
     [ObservableProperty] private Brush healthBrush = PoorBrush;
 
+    // Shown when the raw reported health exceeds 100% (e.g. Surface firmware quirk).
+    [ObservableProperty] private bool healthWasClamped;
+
     [ObservableProperty] private string cycleCountText = "";
     [ObservableProperty] private string designCapacityText = "";
     [ObservableProperty] private string fullChargeCapacityText = "";
@@ -38,13 +45,29 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private bool hasHistory;
 
+    // Trend labels shown above the charts.
+    [ObservableProperty] private string capacityTrendText = "";
+    [ObservableProperty] private string cycleTrendText = "";
+
+    // Update banner
+    [ObservableProperty] private bool updateAvailable;
+    [ObservableProperty] private string updateVersionText = "";
+    [ObservableProperty] private string updateUrl = "";
+
     public ISeries[] CapacitySeries { get; private set; } = [];
+    public ISeries[] HealthSeries { get; private set; } = [];
     public ISeries[] CycleSeries { get; private set; } = [];
-    public Axis[] HistoryXAxes { get; private set; } = [];
+    public Axis[] CapacityXAxes { get; private set; } = [];
+    public Axis[] CapacityYAxes { get; private set; } = [];
+    public Axis[] HealthXAxes { get; private set; } = [];
+    public Axis[] HealthYAxes { get; private set; } = [];
+    public Axis[] CycleXAxes { get; private set; } = [];
+    public Axis[] CycleYAxes { get; private set; } = [];
 
     public MainViewModel()
     {
         _ = RefreshAsync();
+        _ = CheckForUpdateAsync();
     }
 
     [RelayCommand]
@@ -70,6 +93,33 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private void OpenUpdateUrl()
+    {
+        if (!string.IsNullOrEmpty(UpdateUrl))
+        {
+            Process.Start(new ProcessStartInfo(UpdateUrl) { UseShellExecute = true });
+        }
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            var result = await _updateService.CheckForUpdateAsync();
+            if (result is not null)
+            {
+                UpdateVersionText = $"Update available: {result.Version}";
+                UpdateUrl = result.Url;
+                UpdateAvailable = true;
+            }
+        }
+        catch
+        {
+            // Silently ignore - update check is best-effort.
+        }
+    }
+
     private void Apply(BatteryReportData report)
     {
         DeviceName = string.IsNullOrWhiteSpace(report.System.ProductName)
@@ -77,9 +127,15 @@ public partial class MainViewModel : ObservableObject
             : report.System.ProductName;
         LastScanText = $"Report generated {report.ScanTime:g}";
 
-        HealthPercent = report.Battery.DesignCapacityWh > 0
+        // Some laptop firmware (e.g. Microsoft Surface) can report a FullChargeCapacity
+        // slightly higher than DesignCapacity, resulting in a raw health above 100%.
+        // We clamp to 100 and show a note so the user understands what happened.
+        var rawHealth = report.Battery.DesignCapacityWh > 0
             ? Math.Round(report.Battery.FullChargeCapacityWh / report.Battery.DesignCapacityWh * 100, 1)
             : 0;
+        HealthWasClamped = rawHealth > 100;
+        HealthPercent = Math.Min(rawHealth, 100.0);
+
         HealthText = $"{HealthPercent:0.#}%";
         HealthBrush = HealthPercent switch
         {
@@ -102,14 +158,17 @@ public partial class MainViewModel : ObservableObject
         {
             var labels = report.History.Select(h => h.StartDate.ToString("MMM d")).ToArray();
 
+            // --- Capacity chart: full charge vs. design capacity ---
             CapacitySeries =
             [
                 new LineSeries<double>
                 {
                     Name = "Full charge capacity (Wh)",
                     Values = report.History.Select(h => h.FullChargeCapacityWh).ToArray(),
-                    GeometrySize = 4,
+                    GeometrySize = 5,
                     Fill = null,
+                    Stroke = new SolidColorPaint(SKColors.DodgerBlue, 2),
+                    GeometryStroke = new SolidColorPaint(SKColors.DodgerBlue, 2),
                 },
                 new LineSeries<double>
                 {
@@ -117,30 +176,126 @@ public partial class MainViewModel : ObservableObject
                     Values = report.History.Select(h => h.DesignCapacityWh).ToArray(),
                     GeometrySize = 0,
                     Fill = null,
+                    Stroke = new SolidColorPaint(new SKColor(0xD1, 0xD5, 0xDB), 2) { PathEffect = new DashEffect([6, 4]) },
                 },
             ];
+            CapacityXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
+            CapacityYAxes = [new Axis { Name = "Wh", TextSize = 11, NameTextSize = 11 }];
+
+            // --- Health chart: battery health % over time ---
+            var healthValues = report.History
+                .Select(h => h.DesignCapacityWh > 0
+                    ? Math.Min(Math.Round(h.FullChargeCapacityWh / h.DesignCapacityWh * 100, 1), 100.0)
+                    : 0.0)
+                .ToArray();
+
+            HealthSeries =
+            [
+                new LineSeries<double>
+                {
+                    Name = "Battery health (%)",
+                    Values = healthValues,
+                    GeometrySize = 5,
+                    Fill = null,
+                    Stroke = new SolidColorPaint(SKColors.MediumSeaGreen, 2),
+                    GeometryStroke = new SolidColorPaint(SKColors.MediumSeaGreen, 2),
+                },
+            ];
+            HealthXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
+            HealthYAxes =
+            [
+                new Axis
+                {
+                    Name = "%",
+                    TextSize = 11,
+                    NameTextSize = 11,
+                    MinLimit = 0,
+                    MaxLimit = 100,
+                },
+            ];
+
+            // --- Trend labels ---
+            CapacityTrendText = BuildCapacityTrend(report.History);
+            CycleTrendText = BuildCycleTrend(report.History);
+
+            // --- Cycle count chart ---
             CycleSeries =
             [
                 new LineSeries<int>
                 {
-                    Name = "Cycle count",
+                    Name = "Charge cycles",
                     Values = report.History.Select(h => h.CycleCount).ToArray(),
-                    GeometrySize = 4,
+                    GeometrySize = 5,
                     Fill = null,
+                    Stroke = new SolidColorPaint(SKColors.DarkOrange, 2),
+                    GeometryStroke = new SolidColorPaint(SKColors.DarkOrange, 2),
                 },
             ];
-            HistoryXAxes = [new Axis { Labels = labels, LabelsRotation = 45 }];
+            CycleXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
+            CycleYAxes = [new Axis { Name = "Cycles", TextSize = 11, NameTextSize = 11, MinLimit = 0 }];
         }
         else
         {
             CapacitySeries = [];
+            HealthSeries = [];
             CycleSeries = [];
-            HistoryXAxes = [];
+            CapacityXAxes = [];
+            CapacityYAxes = [];
+            HealthXAxes = [];
+            HealthYAxes = [];
+            CycleXAxes = [];
+            CycleYAxes = [];
+            CapacityTrendText = "";
+            CycleTrendText = "";
         }
 
         OnPropertyChanged(nameof(CapacitySeries));
+        OnPropertyChanged(nameof(HealthSeries));
         OnPropertyChanged(nameof(CycleSeries));
-        OnPropertyChanged(nameof(HistoryXAxes));
+        OnPropertyChanged(nameof(CapacityXAxes));
+        OnPropertyChanged(nameof(CapacityYAxes));
+        OnPropertyChanged(nameof(HealthXAxes));
+        OnPropertyChanged(nameof(HealthYAxes));
+        OnPropertyChanged(nameof(CycleXAxes));
+        OnPropertyChanged(nameof(CycleYAxes));
+    }
+
+    // Returns a short human-readable description of the capacity trend.
+    private static string BuildCapacityTrend(IReadOnlyList<CapacityHistoryEntry> history)
+    {
+        if (history.Count < 2) return "";
+
+        var first = history[0].FullChargeCapacityWh;
+        var last = history[^1].FullChargeCapacityWh;
+        if (first <= 0) return "";
+
+        var changePct = (last - first) / first * 100;
+        return changePct switch
+        {
+            < -10 => $"Declining fast ({changePct:+0.#;-0.#}% over period) - consider battery service",
+            < -3  => $"Gradual decline ({changePct:+0.#;-0.#}% over period) - normal aging",
+            _     => $"Stable ({changePct:+0.#;-0.#}% over period)",
+        };
+    }
+
+    // Returns a short human-readable description of the cycle count trend.
+    private static string BuildCycleTrend(IReadOnlyList<CapacityHistoryEntry> history)
+    {
+        if (history.Count < 2) return "";
+
+        var first = history[0].CycleCount;
+        var last = history[^1].CycleCount;
+        var delta = last - first;
+        if (delta <= 0) return "";
+
+        // Estimate how many days span the history.
+        var days = (history[^1].EndDate - history[0].StartDate).TotalDays;
+        if (days > 0)
+        {
+            var perDay = delta / days;
+            return $"+{delta} cycles over period (~{perDay:0.#}/day)";
+        }
+        return $"+{delta} cycles over period";
     }
 
     private static string FormatDuration(TimeSpan? ts)
