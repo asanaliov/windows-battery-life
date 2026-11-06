@@ -8,11 +8,13 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>battery.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
+    <!-- Uses the installed .NET Desktop Runtime. Bundling it makes a far larger exe, and
+         compressing that bundle costs about 100 MB of memory on every launch. -->
+    <SelfContained>false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- WPF's ThemeMode (the Windows 11 Fluent theme) is still marked experimental. -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
     <!-- Version is stamped by the CI pipeline from the git tag (e.g. v1.2.3).
          Local builds stay at 0.0.0 so any released version always shows as an update. -->
     <Version>0.0.0</Version>
@@ -21,7 +23,6 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.5" />
   </ItemGroup>
 
 </Project>

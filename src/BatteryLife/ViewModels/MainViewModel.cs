@@ -1,68 +1,73 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Media;
+using BatteryLife.Controls;
 using BatteryLife.Models;
 using BatteryLife.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using LiveChartsCore;
-using LiveChartsCore.SkiaSharpView;
-using LiveChartsCore.SkiaSharpView.Painting;
-using SkiaSharp;
 
 namespace BatteryLife.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
-    private static readonly SolidColorBrush GoodBrush = new(Color.FromRgb(0x22, 0xC5, 0x5E));
-    private static readonly SolidColorBrush FairBrush = new(Color.FromRgb(0xF5, 0x9E, 0x0B));
-    private static readonly SolidColorBrush PoorBrush = new(Color.FromRgb(0xEF, 0x44, 0x44));
+    private const string AvailableStatusText = "Installs in the background and restarts the app.";
+    private const string NoValue = "—";
+
+    private static readonly string[] PlaceholderProductNames =
+        ["To be filled by O.E.M.", "System Product Name", "Default string", "Not Applicable"];
 
     private readonly BatteryReportService _service = new();
     private readonly UpdateService _updateService = new();
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowErrorBanner), nameof(ShowEmptyState), nameof(ShowHistoryHint))]
+    private bool hasReport;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowErrorBanner), nameof(ShowEmptyState))]
+    private bool hasError;
+
     [ObservableProperty] private bool isLoading;
-    [ObservableProperty] private bool hasError;
     [ObservableProperty] private string? errorMessage;
 
-    [ObservableProperty] private string deviceName = "";
+    [ObservableProperty] private string deviceName = "Battery Life";
     [ObservableProperty] private string lastScanText = "";
 
     [ObservableProperty] private double healthPercent;
     [ObservableProperty] private string healthText = "";
-    [ObservableProperty] private Brush healthBrush = PoorBrush;
+    [ObservableProperty] private string healthLevel = "";
+    [ObservableProperty] private string capacityText = "";
 
-    // Shown when the raw reported health exceeds 100% (e.g. Surface firmware quirk).
+    // Set when the raw reported health exceeds 100% (a firmware quirk on some laptops).
     [ObservableProperty] private bool healthWasClamped;
+    [ObservableProperty] private string batteryCountText = "";
 
     [ObservableProperty] private string cycleCountText = "";
-    [ObservableProperty] private string designCapacityText = "";
-    [ObservableProperty] private string fullChargeCapacityText = "";
-
     [ObservableProperty] private string fullChargeActiveText = "";
     [ObservableProperty] private string fullChargeStandbyText = "";
     [ObservableProperty] private string designActiveText = "";
     [ObservableProperty] private string designStandbyText = "";
 
-    [ObservableProperty] private bool hasHistory;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowHistoryHint))]
+    private bool hasHistory;
 
-    private IReadOnlyList<CapacityHistoryEntry> _history = [];
-    private DateTime _historyAsOf;
+    [ObservableProperty] private bool hasCycleHistory;
+    [ObservableProperty] private IReadOnlyList<ChartPoint> healthPoints = [];
+    [ObservableProperty] private IReadOnlyList<ChartPoint> cyclePoints = [];
+    [ObservableProperty] private double healthAxisMinimum;
 
     // Update banner
     [ObservableProperty] private bool updateAvailable;
     [ObservableProperty] private string updateVersionText = "";
-    [ObservableProperty] private string updateStatusText = "A new release is available.";
+    [ObservableProperty] private string updateStatusText = AvailableStatusText;
     [ObservableProperty] private bool isUpdating;
     [ObservableProperty] private bool lastUpdateFailed;
     private UpdateInfo? _update;
 
-    public ISeries[] HealthSeries { get; private set; } = [];
-    public ISeries[] CycleSeries { get; private set; } = [];
-    public Axis[] HealthXAxes { get; private set; } = [];
-    public Axis[] HealthYAxes { get; private set; } = [];
-    public Axis[] CycleXAxes { get; private set; } = [];
-    public Axis[] CycleYAxes { get; private set; } = [];
+    public bool ShowErrorBanner => HasError && HasReport;
+    public bool ShowEmptyState => HasError && !HasReport;
+    public bool ShowHistoryHint => HasReport && !HasHistory;
 
     public MainViewModel()
     {
@@ -83,11 +88,12 @@ public partial class MainViewModel : ObservableObject
         {
             var report = await _service.GetReportAsync();
             Apply(report);
+            HasReport = true;
         }
         catch (Exception ex)
         {
-            HasError = true;
             ErrorMessage = ex.Message;
+            HasError = true;
         }
         finally
         {
@@ -104,7 +110,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         if (MessageBox.Show(
-                $"Download and install {UpdateVersionText} now? The app will restart when the update is ready.",
+                $"Download and install {_update.Version} now? The app will restart when the update is ready.",
                 "Install update",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -116,12 +122,11 @@ public partial class MainViewModel : ObservableObject
         string? downloadedUpdate = null;
         try
         {
-            UpdateStatusText = "Downloading update...";
-            var progress = new Progress<double>(value =>
-                UpdateStatusText = $"Downloading update... {value:P0}");
+            UpdateStatusText = "Downloading...";
+            var progress = new Progress<double>(value => UpdateStatusText = $"Downloading... {value:P0}");
             downloadedUpdate = await _updateService.DownloadUpdateAsync(_update, progress);
 
-            UpdateStatusText = "Installing update and restarting...";
+            UpdateStatusText = "Installing and restarting...";
             _updateService.LaunchUpdater(downloadedUpdate);
             Application.Current.Shutdown();
         }
@@ -159,130 +164,104 @@ public partial class MainViewModel : ObservableObject
 
     private void Apply(BatteryReportData report)
     {
-        DeviceName = string.IsNullOrWhiteSpace(report.System.ProductName)
-            ? report.System.ComputerName
-            : report.System.ProductName;
-        LastScanText = $"Report generated {report.ScanTime:g}";
+        var battery = report.Battery;
 
-        // Some laptop firmware (e.g. Microsoft Surface) can report a FullChargeCapacity
-        // slightly higher than DesignCapacity, resulting in a raw health above 100%.
-        // We clamp to 100 and show a note so the user understands what happened.
-        var rawHealth = report.Battery.DesignCapacityWh > 0
-            ? Math.Round(report.Battery.FullChargeCapacityWh / report.Battery.DesignCapacityWh * 100, 1)
+        DeviceName = CleanDeviceName(report.System.ProductName, report.System.ComputerName);
+        LastScanText = $"Updated {report.ScanTime:g}";
+
+        var rawHealth = battery.DesignCapacityWh > 0
+            ? Math.Round(battery.FullChargeCapacityWh / battery.DesignCapacityWh * 100, 1)
             : 0;
         HealthWasClamped = rawHealth > 100;
         HealthPercent = Math.Min(rawHealth, 100.0);
-
-        HealthText = $"{HealthPercent:0.#}%";
-        HealthBrush = HealthPercent switch
+        HealthText = battery.DesignCapacityWh > 0 ? $"{HealthPercent:0.#}%" : NoValue;
+        HealthLevel = HealthPercent switch
         {
-            >= 80 => GoodBrush,
-            >= 50 => FairBrush,
-            _ => PoorBrush,
+            <= 0 => "Unknown",
+            >= 80 => "Good",
+            >= 50 => "Fair",
+            _ => "Poor",
         };
+        CapacityText = $"Holds {battery.FullChargeCapacityWh:0.0} of {battery.DesignCapacityWh:0.0} Wh when full";
+        BatteryCountText = battery.BatteryCount > 1 ? $"Combined across {battery.BatteryCount} batteries" : "";
 
-        CycleCountText = report.Battery.CycleCount >= 0 ? report.Battery.CycleCount.ToString() : "—";
-        DesignCapacityText = $"{report.Battery.DesignCapacityWh:0.0} Wh";
-        FullChargeCapacityText = $"{report.Battery.FullChargeCapacityWh:0.0} Wh";
+        CycleCountText = battery.CycleCount >= 0 ? battery.CycleCount.ToString() : NoValue;
 
         FullChargeActiveText = FormatDuration(report.FullChargeEstimate.ActiveRuntime);
         FullChargeStandbyText = FormatDuration(report.FullChargeEstimate.ConnectedStandbyRuntime);
-        DesignActiveText = FormatDuration(report.DesignEstimate.ActiveRuntime);
-        DesignStandbyText = FormatDuration(report.DesignEstimate.ConnectedStandbyRuntime);
+        DesignActiveText = FormatWhenNew(report.DesignEstimate.ActiveRuntime);
+        DesignStandbyText = FormatWhenNew(report.DesignEstimate.ConnectedStandbyRuntime);
 
-        _history = report.History
-            .Where(entry =>
-                entry.StartDate != DateTime.MinValue &&
-                entry.EndDate != DateTime.MinValue &&
-                entry.EndDate >= entry.StartDate &&
-                entry.StartDate <= report.ScanTime &&
-                entry.EndDate <= report.ScanTime)
-            .ToArray();
-        _historyAsOf = _history.Count > 0
-            ? _history.Max(entry => entry.EndDate)
-            : report.ScanTime;
-        HasHistory = _history.Count > 1;
-        UpdateHistoryCharts();
+        UpdateHistory(report);
     }
 
-    private void UpdateHistoryCharts()
+    private void UpdateHistory(BatteryReportData report)
     {
-        var history = _history.Where(entry => entry.EndDate <= _historyAsOf).ToArray();
-        var cycleHistory = history.Where(entry => entry.CycleCount >= 0).ToArray();
-        HasHistory = history.Length > 1;
+        var history = report.History
+            .Where(entry =>
+                entry.StartDate != DateTime.MinValue &&
+                entry.EndDate >= entry.StartDate &&
+                entry.EndDate <= report.ScanTime)
+            .ToArray();
 
-        if (HasHistory)
+        // Zero capacities and cycle counts mean Windows has no reading for that period.
+        var health = history
+            .Where(h => h.DesignCapacityWh > 0 && h.FullChargeCapacityWh > 0)
+            .Select(h => new ChartPoint(h.EndDate, ToHealth(h.FullChargeCapacityWh, h.DesignCapacityWh)))
+            .ToList();
+        var cycles = history
+            .Where(h => h.CycleCount > 0)
+            .Select(h => new ChartPoint(h.EndDate, h.CycleCount))
+            .ToList();
+
+        // History stops at the last full period, so finish the lines at today's reading.
+        var battery = report.Battery;
+        if (battery.DesignCapacityWh > 0 && battery.FullChargeCapacityWh > 0)
         {
-            var labels = history.Select(h => h.EndDate.ToString("MMM d, yyyy")).ToArray();
-
-            var healthValues = history
-                .Select(h => h.DesignCapacityWh > 0
-                    ? Math.Min(Math.Round(h.FullChargeCapacityWh / h.DesignCapacityWh * 100, 1), 100.0)
-                    : 0.0)
-                .ToArray();
-
-            HealthSeries =
-            [
-                new LineSeries<double>
-                {
-                    Name = "Battery health (%)",
-                    Values = healthValues,
-                    GeometrySize = 5,
-                    Fill = null,
-                    Stroke = new SolidColorPaint(SKColors.MediumSeaGreen, 2),
-                    GeometryStroke = new SolidColorPaint(SKColors.MediumSeaGreen, 2),
-                },
-            ];
-            HealthXAxes = [new Axis { Labels = labels, LabelsRotation = 45, TextSize = 11 }];
-            HealthYAxes = [new Axis { Name = "%", TextSize = 11, NameTextSize = 11, MinLimit = 0, MaxLimit = 100 }];
-            CycleSeries =
-            [
-                new LineSeries<int>
-                {
-                    Name = "Charge cycles",
-                    Values = cycleHistory.Select(h => h.CycleCount).ToArray(),
-                    GeometrySize = 5,
-                    Fill = null,
-                    Stroke = new SolidColorPaint(SKColors.DarkOrange, 2),
-                    GeometryStroke = new SolidColorPaint(SKColors.DarkOrange, 2),
-                },
-            ];
-            CycleXAxes =
-            [
-                new Axis
-                {
-                    Labels = cycleHistory.Select(h => h.EndDate.ToString("MMM d, yyyy")).ToArray(),
-                    LabelsRotation = 45,
-                    TextSize = 11,
-                },
-            ];
-            CycleYAxes = [new Axis { Name = "Cycles", TextSize = 11, NameTextSize = 11, MinLimit = 0 }];
-
+            health.Add(new ChartPoint(report.ScanTime, ToHealth(battery.FullChargeCapacityWh, battery.DesignCapacityWh)));
         }
-        else
+        if (battery.CycleCount > 0)
         {
-            HealthSeries = [];
-            CycleSeries = [];
-            HealthXAxes = [];
-            HealthYAxes = [];
-            CycleXAxes = [];
-            CycleYAxes = [];
+            cycles.Add(new ChartPoint(report.ScanTime, battery.CycleCount));
         }
 
-        OnPropertyChanged(nameof(HealthSeries));
-        OnPropertyChanged(nameof(CycleSeries));
-        OnPropertyChanged(nameof(HealthXAxes));
-        OnPropertyChanged(nameof(HealthYAxes));
-        OnPropertyChanged(nameof(CycleXAxes));
-        OnPropertyChanged(nameof(CycleYAxes));
+        // Zoom the axis to the data, since a 0-100 scale flattens real wear into a line.
+        HealthAxisMinimum = health.Count > 0
+            ? Math.Max(0, Math.Floor((health.Min(p => p.Value) - 5) / 5) * 5)
+            : 0;
+        HealthPoints = health;
+        CyclePoints = cycles;
+        HasHistory = health.Count > 1;
+        HasCycleHistory = cycles.Count > 1;
+    }
+
+    private static double ToHealth(double fullChargeWh, double designWh) =>
+        Math.Min(Math.Round(fullChargeWh / designWh * 100, 1), 100.0);
+
+    /// <summary>Turns "Vivobook_ASUSLaptop X1505VA_X1505VA" into "Vivobook ASUSLaptop X1505VA".</summary>
+    private static string CleanDeviceName(string productName, string computerName)
+    {
+        if (string.IsNullOrWhiteSpace(productName) ||
+            PlaceholderProductNames.Contains(productName.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            return computerName;
+        }
+
+        var words = productName.Split([' ', '_'], StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(' ', words.Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string FormatWhenNew(TimeSpan? ts)
+    {
+        var text = FormatDuration(ts);
+        return text == NoValue ? "" : $"{text} when new";
     }
 
     private static string FormatDuration(TimeSpan? ts)
     {
-        if (ts is null) return "—";
-        var t = ts.Value;
+        if (ts is not { } t || t <= TimeSpan.Zero) return NoValue;
         if (t.TotalDays >= 1) return $"{(int)t.TotalDays}d {t.Hours}h";
         if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes}m";
-        return $"{Math.Max(0, (int)t.TotalMinutes)}m";
+        return $"{(int)t.TotalMinutes}m";
     }
 }
