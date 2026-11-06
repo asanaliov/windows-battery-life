@@ -75,6 +75,14 @@
                     <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" Foreground="#991B1B"/>
                 </Border>
 
+                <!-- The updater restarted the old version after failing -->
+                <Border Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" CornerRadius="6"
+                        Padding="12,8" Margin="6,4"
+                        Visibility="{Binding LastUpdateFailed, Converter={StaticResource BoolToVis}}">
+                    <TextBlock TextWrapping="Wrap" Foreground="#92400E" FontSize="12"
+                               Text="The update couldn't be installed, so you're still on the previous version. Details are in BatteryLife-update.log in your local app data folder."/>
+                </Border>
+
                 <!-- Update available banner -->
                 <Border Background="#EFF6FF" BorderBrush="#93C5FD" BorderThickness="1" CornerRadius="6"
                         Padding="12,10" Margin="6,4"

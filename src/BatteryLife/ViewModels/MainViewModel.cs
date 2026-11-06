@@ -54,7 +54,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string updateVersionText = "";
     [ObservableProperty] private string updateStatusText = "A new release is available.";
     [ObservableProperty] private bool isUpdating;
-    private Uri? _updateDownloadUrl;
+    [ObservableProperty] private bool lastUpdateFailed;
+    private UpdateInfo? _update;
 
     public ISeries[] HealthSeries { get; private set; } = [];
     public ISeries[] CycleSeries { get; private set; } = [];
@@ -65,6 +66,8 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        LastUpdateFailed = Environment.GetCommandLineArgs().Contains(UpdateService.UpdateFailedArgument);
+
         _ = RefreshAsync();
         _ = CheckForUpdateAsync();
     }
@@ -95,7 +98,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallUpdateAsync()
     {
-        if (_updateDownloadUrl is null || IsUpdating)
+        if (_update is null || IsUpdating)
         {
             return;
         }
@@ -110,15 +113,13 @@ public partial class MainViewModel : ObservableObject
         }
 
         IsUpdating = true;
-        HasError = false;
-        ErrorMessage = null;
         string? downloadedUpdate = null;
         try
         {
             UpdateStatusText = "Downloading update...";
             var progress = new Progress<double>(value =>
                 UpdateStatusText = $"Downloading update... {value:P0}");
-            downloadedUpdate = await _updateService.DownloadUpdateAsync(_updateDownloadUrl, progress);
+            downloadedUpdate = await _updateService.DownloadUpdateAsync(_update, progress);
 
             UpdateStatusText = "Installing update and restarting...";
             _updateService.LaunchUpdater(downloadedUpdate);
@@ -126,9 +127,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            HasError = true;
-            ErrorMessage = $"Update failed: {ex.Message}";
-            UpdateStatusText = "";
+            UpdateStatusText = $"Update failed: {ex.Message}";
             if (downloadedUpdate is not null && File.Exists(downloadedUpdate))
             {
                 File.Delete(downloadedUpdate);
@@ -148,7 +147,7 @@ public partial class MainViewModel : ObservableObject
             if (result is not null)
             {
                 UpdateVersionText = $"Update available: {result.Version}";
-                _updateDownloadUrl = result.DownloadUrl;
+                _update = result;
                 UpdateAvailable = true;
             }
         }

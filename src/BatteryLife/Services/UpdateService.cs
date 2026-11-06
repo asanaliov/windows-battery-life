@@ -1,6 +1,8 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 using System.Diagnostics;
 using System.IO;
@@ -18,6 +20,10 @@ public class UpdateService
 
     private static readonly HttpClient Http = new();
     private const long MaximumUpdateSize = 250 * 1024 * 1024;
+    private const string Sha256DigestPrefix = "sha256:";
+
+    /// <summary>Passed to the app when the updater had to restart the old version.</summary>
+    public const string UpdateFailedArgument = "--update-failed";
 
     static UpdateService()
     {
@@ -53,10 +59,9 @@ public class UpdateService
         if (latestVersion <= runningVersion) return null;
 
         var expectedAssetName = $"BatteryLife-v{latestVersion}-win-x64.exe";
-        var assetUrl = release.Assets?
-            .FirstOrDefault(asset => string.Equals(asset.Name, expectedAssetName, StringComparison.Ordinal))
-            ?.BrowserDownloadUrl;
-        if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var downloadUri) ||
+        var asset = release.Assets?
+            .FirstOrDefault(asset => string.Equals(asset.Name, expectedAssetName, StringComparison.Ordinal));
+        if (!Uri.TryCreate(asset?.BrowserDownloadUrl, UriKind.Absolute, out var downloadUri) ||
             downloadUri.Scheme != Uri.UriSchemeHttps ||
             downloadUri.Host != "github.com" ||
             !downloadUri.AbsolutePath.Contains("/releases/download/", StringComparison.Ordinal))
@@ -64,14 +69,22 @@ public class UpdateService
             return null;
         }
 
+        // Without a published checksum the download couldn't be verified, so don't offer it.
+        var digest = asset?.Digest;
+        if (digest is null || !digest.StartsWith(Sha256DigestPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
         return new UpdateInfo(
             $"v{latestVersion}",
-            downloadUri);
+            downloadUri,
+            digest[Sha256DigestPrefix.Length..]);
     }
 
-    public async Task<string> DownloadUpdateAsync(Uri downloadUri, IProgress<double>? progress = null)
+    public async Task<string> DownloadUpdateAsync(UpdateInfo update, IProgress<double>? progress = null)
     {
-        using var response = await Http.GetAsync(downloadUri, HttpCompletionOption.ResponseHeadersRead);
+        using var response = await Http.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
 
         if (response.Content.Headers.ContentLength is > MaximumUpdateSize)
@@ -84,6 +97,7 @@ public class UpdateService
         {
             await using var input = await response.Content.ReadAsStreamAsync();
             await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var buffer = new byte[81920];
             long totalRead = 0;
             int bytesRead;
@@ -95,6 +109,7 @@ public class UpdateService
                     throw new InvalidOperationException("The update download is larger than expected.");
                 }
 
+                hash.AppendData(buffer, 0, bytesRead);
                 await output.WriteAsync(buffer.AsMemory(0, bytesRead));
                 if (response.Content.Headers.ContentLength is long contentLength and > 0)
                 {
@@ -105,6 +120,12 @@ public class UpdateService
             if (totalRead == 0)
             {
                 throw new InvalidOperationException("The update download was empty.");
+            }
+
+            var actualSha256 = Convert.ToHexString(hash.GetHashAndReset());
+            if (!string.Equals(actualSha256, update.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("The update download failed its checksum check.");
             }
 
             return destination;
@@ -145,14 +166,18 @@ public class UpdateService
                 }
                 Start-Process -FilePath $destination
             } catch {
-                $_ | Out-File -LiteralPath $logPath -Append
+                try { $_ | Out-File -LiteralPath $logPath -Append } catch { }
+                # Bring the existing version back so the app doesn't just disappear.
+                try { Start-Process -FilePath $destination -ArgumentList '{{UpdateFailedArgument}}' } catch { }
             } finally {
                 Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
             }
             """;
 
-        File.WriteAllText(scriptPath, script);
+        // Windows PowerShell 5.1 reads scripts without a BOM as ANSI, which would corrupt any
+        // non-ASCII characters in the paths above.
+        File.WriteAllText(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         try
         {
             var startInfo = new ProcessStartInfo("powershell.exe")
@@ -196,7 +221,10 @@ public class UpdateService
 
         [JsonPropertyName("browser_download_url")]
         public string? BrowserDownloadUrl { get; init; }
+
+        [JsonPropertyName("digest")]
+        public string? Digest { get; init; }
     }
 }
 
-public sealed record UpdateInfo(string Version, Uri DownloadUrl);
+public sealed record UpdateInfo(string Version, Uri DownloadUrl, string Sha256);
