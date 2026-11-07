@@ -6,7 +6,8 @@
         xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
         xmlns:conv="clr-namespace:BatteryLife.Converters"
         mc:Ignorable="d"
-        Title="Battery Life" Height="700" Width="960" MinWidth="720" MinHeight="560"
+        Title="Battery Life" Height="820" Width="1080" MinWidth="720" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
         Background="#F4F5F7"
         FontFamily="Segoe UI">
     <Window.Resources>
@@ -67,10 +68,54 @@
                 <ProgressBar IsIndeterminate="True" Height="3" Margin="6,4"
                              Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}"/>
 
+                <!-- Error banner -->
                 <Border Background="#FEF2F2" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="6"
                         Padding="12" Margin="6,4"
                         Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
                     <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" Foreground="#991B1B"/>
+                </Border>
+
+                <!-- The updater restarted the old version after failing -->
+                <Border Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" CornerRadius="6"
+                        Padding="12,8" Margin="6,4"
+                        Visibility="{Binding LastUpdateFailed, Converter={StaticResource BoolToVis}}">
+                    <TextBlock TextWrapping="Wrap" Foreground="#92400E" FontSize="12"
+                               Text="The update couldn't be installed, so you're still on the previous version. Details are in BatteryLife-update.log in your local app data folder."/>
+                </Border>
+
+                <!-- Update available banner -->
+                <Border Background="#EFF6FF" BorderBrush="#93C5FD" BorderThickness="1" CornerRadius="6"
+                        Padding="12,10" Margin="6,4"
+                        Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#1D4ED8"
+                                       Text="{Binding UpdateVersionText}"/>
+                            <TextBlock FontSize="11" Foreground="#3B82F6" Margin="0,2,0,0"
+                                       Text="{Binding UpdateStatusText}"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Install &amp; Restart" Padding="12,6"
+                                Command="{Binding InstallUpdateCommand}"
+                                IsEnabled="{Binding IsUpdating, Converter={StaticResource InverseBool}}"
+                                Background="#2563EB" Foreground="White" BorderThickness="0"
+                                FontWeight="SemiBold" Cursor="Hand"/>
+                    </Grid>
+                </Border>
+
+                <!-- Clamped health note (shown only on devices like Surface that report >100%) -->
+                <Border Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" CornerRadius="6"
+                        Padding="12,8" Margin="6,4"
+                        Visibility="{Binding HealthWasClamped, Converter={StaticResource BoolToVis}}">
+                    <TextBlock TextWrapping="Wrap" Foreground="#92400E" FontSize="12">
+                        <Run FontWeight="SemiBold">Note:</Run>
+                        <Run>Your battery's firmware reports a full-charge capacity slightly above its design capacity.
+This is common on devices like Microsoft Surface and does not indicate a problem.
+Battery health is shown as 100% (the true maximum).</Run>
+                    </TextBlock>
                 </Border>
 
                 <!-- Summary cards -->
@@ -145,23 +190,35 @@
                 </UniformGrid>
 
                 <!-- History charts -->
-                <TextBlock Text="History" Style="{StaticResource SectionHeader}"
+                <TextBlock Text="Battery history" Style="{StaticResource SectionHeader}"
                            Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}"/>
+
+                <!-- Health and cycle history -->
                 <Grid Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
+
+                    <!-- Battery health % over time -->
                     <Border Grid.Column="0" Style="{StaticResource CardStyle}">
                         <StackPanel>
-                            <TextBlock Text="CAPACITY OVER TIME" Style="{StaticResource CardLabel}"/>
-                            <lvc:CartesianChart Series="{Binding CapacitySeries}" XAxes="{Binding HistoryXAxes}" Height="220" Margin="0,8,0,0"/>
+                            <TextBlock Text="BATTERY HEALTH OVER TIME" Style="{StaticResource CardLabel}"/>
+                            <lvc:CartesianChart Series="{Binding HealthSeries}"
+                                               XAxes="{Binding HealthXAxes}"
+                                               YAxes="{Binding HealthYAxes}"
+                                               Height="240" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
+
+                    <!-- Cycle count over time -->
                     <Border Grid.Column="1" Style="{StaticResource CardStyle}">
                         <StackPanel>
-                            <TextBlock Text="CYCLE COUNT OVER TIME" Style="{StaticResource CardLabel}"/>
-                            <lvc:CartesianChart Series="{Binding CycleSeries}" XAxes="{Binding HistoryXAxes}" Height="220" Margin="0,8,0,0"/>
+                            <TextBlock Text="CHARGE CYCLES OVER TIME" Style="{StaticResource CardLabel}"/>
+                            <lvc:CartesianChart Series="{Binding CycleSeries}"
+                                               XAxes="{Binding CycleXAxes}"
+                                               YAxes="{Binding CycleYAxes}"
+                                               Height="240" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>
