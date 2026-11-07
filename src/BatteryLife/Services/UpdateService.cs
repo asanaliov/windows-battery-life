@@ -139,11 +139,15 @@ public class UpdateService
 
     public void LaunchUpdater(string downloadedUpdate)
     {
+        // Releases are downloaded as e.g. BatteryLife-v1.2.3-win-x64.exe, so only check the prefix.
+        // This still refuses to overwrite dotnet.exe when the app is started with `dotnet BatteryLife.dll`.
         var executablePath = Environment.ProcessPath;
+        var fileName = Path.GetFileName(executablePath);
         if (string.IsNullOrWhiteSpace(executablePath) ||
-            !string.Equals(Path.GetFileName(executablePath), "BatteryLife.exe", StringComparison.OrdinalIgnoreCase))
+            !fileName!.StartsWith("BatteryLife", StringComparison.OrdinalIgnoreCase) ||
+            !fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Updates can only be installed from the published BatteryLife.exe.");
+            throw new InvalidOperationException("Updates can only be installed from a published BatteryLife exe.");
         }
 
         var scriptPath = Path.Combine(Path.GetTempPath(), $"BatteryLife-updater-{Guid.NewGuid():N}.ps1");

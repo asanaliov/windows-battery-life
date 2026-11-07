@@ -28,7 +28,7 @@ jobs:
           $ver = $tag.TrimStart('v')
           echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
 
-      - name: Publish self-contained exe
+      - name: Publish exe
         run: >
           dotnet publish src/BatteryLife/BatteryLife.csproj
           -c Release
@@ -45,4 +45,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: BatteryLife-${{ github.ref_name }}-win-x64.exe
+          body: "Requires the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)."
           generate_release_notes: true

@@ -12,7 +12,8 @@ Under the hood it runs `powercfg /batteryreport /xml`, parses the report, and di
 ## Requirements
 
 - Windows 10/11
-- .NET 8 SDK (or later) to build
+- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run
+- .NET 10 SDK to build
 
 ## Running from source
 
@@ -22,7 +23,7 @@ dotnet run --project src/BatteryLife
 
 ## Building a standalone .exe
 
-Produces a single self-contained `BatteryLife.exe` (no .NET runtime install required on the target machine):
+Produces a single small `BatteryLife.exe`. The target machine needs the .NET 10 Desktop Runtime:
 
 ```
 dotnet publish src/BatteryLife/BatteryLife.csproj -c Release -r win-x64
